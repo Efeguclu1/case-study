@@ -1,0 +1,29 @@
+# GCP credentials
+gcp-key.json
+*.json.bak
+
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/terraform.tfvars
+
+# Environment files
+.env
+*.env
+mern-project/server/config.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Node
+node_modules/
+
+# Docker
+docker-compose.override.yml

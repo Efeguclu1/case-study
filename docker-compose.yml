@@ -1,0 +1,43 @@
+services:
+  frontend:
+    build:
+      context: ./mern-project/client
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - mern-network
+
+  backend:
+    build:
+      context: ./mern-project/server
+      dockerfile: Dockerfile
+    ports:
+      - "5050:5050"
+    environment:
+      - ATLAS_URI=${ATLAS_URI}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5050/healthcheck"]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+    networks:
+      - mern-network
+
+  python-etl:
+    build:
+      context: ./python-project
+      dockerfile: Dockerfile
+    restart: "no"
+    networks:
+      - mern-network
+
+networks:
+  mern-network:
+    driver: bridge

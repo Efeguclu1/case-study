@@ -1,0 +1,183 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  GCP_REGION: europe-west1
+  GAR_REPOSITORY: mern-app
+  GKE_CLUSTER: mern-cluster
+  USE_GKE_GCLOUD_AUTH_PLUGIN: "True"
+
+jobs:
+  # ==================== CI ====================
+  lint-and-test-frontend:
+    name: Frontend - Lint & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./mern-project/client
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: "npm"
+          cache-dependency-path: ./mern-project/client/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test -- --coverage --watchAll=false --passWithNoTests
+
+      - name: Build application
+        run: npm run build
+
+  lint-and-test-backend:
+    name: Backend - Lint & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./mern-project/server
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax check
+        run: node --check server.mjs
+
+  build-and-push:
+    name: Build & Push Docker Images
+    needs: [lint-and-test-frontend, lint-and-test-backend]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push Frontend image
+        run: |
+          IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/frontend"
+          docker build -t ${IMAGE}:${{ github.sha }} -t ${IMAGE}:latest ./mern-project/client
+          docker push ${IMAGE}:${{ github.sha }}
+          docker push ${IMAGE}:latest
+
+      - name: Build and push Backend image
+        run: |
+          IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/backend"
+          docker build -t ${IMAGE}:${{ github.sha }} -t ${IMAGE}:latest ./mern-project/server
+          docker push ${IMAGE}:${{ github.sha }}
+          docker push ${IMAGE}:latest
+
+      - name: Build and push Python ETL image
+        run: |
+          IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/python-etl"
+          docker build -t ${IMAGE}:${{ github.sha }} -t ${IMAGE}:latest ./python-project
+          docker push ${IMAGE}:${{ github.sha }}
+          docker push ${IMAGE}:latest
+
+  # ==================== CD ====================
+  deploy:
+    name: Deploy to GKE
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud with auth plugin
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - name: Get GKE credentials
+        run: |
+          PLUGIN_PATH=$(find / -name "gke-gcloud-auth-plugin" -type f 2>/dev/null | head -1)
+          if [ -n "$PLUGIN_PATH" ]; then
+            echo "$(dirname $PLUGIN_PATH)" >> $GITHUB_PATH
+          fi
+          gcloud container clusters get-credentials "${{ env.GKE_CLUSTER }}" \
+            --zone "${{ secrets.GCP_ZONE }}" \
+            --project "${{ secrets.GCP_PROJECT_ID }}"
+
+      - name: Create namespace (if not exists)
+        run: kubectl apply -f k8s/namespace.yaml
+
+      - name: Deploy Backend
+        run: |
+          IMAGE_PREFIX="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}"
+          sed -i "s|europe-west1-docker.pkg.dev/case-study-486709/mern-app/backend:latest|${IMAGE_PREFIX}/backend:${{ github.sha }}|g" k8s/backend/deployment.yaml
+          kubectl apply -f k8s/backend/configmap.yaml
+          kubectl apply -f k8s/backend/deployment.yaml
+          kubectl apply -f k8s/backend/service.yaml
+          kubectl apply -f k8s/backend/hpa.yaml
+
+      - name: Deploy Frontend
+        run: |
+          IMAGE_PREFIX="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}"
+          sed -i "s|europe-west1-docker.pkg.dev/case-study-486709/mern-app/frontend:latest|${IMAGE_PREFIX}/frontend:${{ github.sha }}|g" k8s/frontend/deployment.yaml
+          kubectl apply -f k8s/frontend/configmap.yaml
+          kubectl apply -f k8s/frontend/deployment.yaml
+          kubectl apply -f k8s/frontend/service.yaml
+
+      - name: Deploy Python ETL CronJob
+        run: |
+          IMAGE_PREFIX="${{ env.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}"
+          sed -i "s|europe-west1-docker.pkg.dev/case-study-486709/mern-app/python-etl:latest|${IMAGE_PREFIX}/python-etl:${{ github.sha }}|g" k8s/python-etl/cronjob.yaml
+          kubectl apply -f k8s/python-etl/cronjob.yaml
+
+      - name: Deploy Monitoring
+        run: |
+          kubectl apply -f k8s/monitoring/prometheus-config.yaml
+          kubectl apply -f k8s/monitoring/prometheus-deployment.yaml
+
+      - name: Wait for rollouts
+        run: |
+          kubectl rollout status deployment/backend -n mern-app --timeout=300s
+          kubectl rollout status deployment/frontend -n mern-app --timeout=300s
+
+      - name: Verify deployment
+        run: |
+          echo "=== Pods ==="
+          kubectl get pods -n mern-app
+          echo ""
+          echo "=== Services ==="
+          kubectl get svc -n mern-app
+          echo ""
+          echo "=== CronJobs ==="
+          kubectl get cronjobs -n mern-app
+          echo ""
+          echo "=== HPA ==="
+          kubectl get hpa -n mern-app
