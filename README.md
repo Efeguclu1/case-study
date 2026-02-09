@@ -22,8 +22,8 @@ MERN stack uygulamasi ve Python ETL projesinin GCP (GKE) uzerine deploy edilmesi
 ```
 .
 ├── .github/workflows/
-│   ├── ci.yml                  # CI: test, build, push
-│   └── cd.yml                  # CD: deploy to GKE
+│   ├── ci-cd.yml                  # CI: test, build, push, CD: deploy to GKE
+│                     
 ├── mern-project/
 │   ├── client/                 # React frontend
 │   │   ├── Dockerfile
@@ -54,15 +54,6 @@ MERN stack uygulamasi ve Python ETL projesinin GCP (GKE) uzerine deploy edilmesi
 ├── docker-compose.yml
 └── README.md
 ```
-
-## Hizli Baslangic
-
-### Gereksinimler
-
-- GCP hesabi (faturalandirma aktif)
-- `gcloud`, `terraform`, `kubectl`, `docker` kurulu
-- MongoDB Atlas cluster'i hazir
-
 
 
 ## Mimari
