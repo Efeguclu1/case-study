@@ -97,7 +97,14 @@ docker build --platform linux/amd64 -t IMAGE:TAG ./path
 
 **Sebep:** MongoDB Atlas Network Access ayarlarinda GKE node IP'lerine izin verilmemisti.
 
-**Cozum:** Atlas > Network Access > `0.0.0.0/0` eklendi.
+**Cozum:** Atlas > Network Access > `0.0.0.0/0` eklendi. 
+
+**Not:** Production ortamında `0.0.0.0/0` güvenlik riski oluşturur. İdeal çözüm GKE node'larının çıkış IP'lerini (NAT Gateway üzerinden sabit IP) Atlas whitelist'ine eklemektir. Ancak bu case study kapsamında:
+- Cloud NAT ek maliyet ve kompleksite getirir
+- Atlas zaten TLS encryption ve authentication zorunlu tutar
+- Veritabanı erişimi güçlü şifre + connection string ile korunur
+
+Bu nedenle case study ortamı için kabul edilebilir bir trade-off olarak değerlendirilmiştir.
 
 ### 3. Yetersiz CPU Kaynaklari
 

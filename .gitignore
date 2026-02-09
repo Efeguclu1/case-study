@@ -1,6 +1,7 @@
 # GCP credentials
 gcp-key.json
 *.json.bak
+new-key.json
 
 # Terraform
 terraform/.terraform/
